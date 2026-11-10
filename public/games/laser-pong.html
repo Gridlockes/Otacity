@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Laser Pong — Otacity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="stylesheet" href="kit.css">
+<script src="kit.js"></script>
+</head>
+<body>
+<script>
+'use strict';
+(() => {
+  const W = 800, H = 450, PH = 80, PW = 12, WIN = 7;
+  const LASER_CD = 3.5, STUN = 0.7, LASER_SPEED = 900;
+  let paddles, ball, lasers, trail, serveT, vsCpu, flash;
+
+  function newBall(toward){
+    const a = Kit.rand(-0.5, 0.5);
+    ball = { x: W / 2, y: H / 2, vx: Math.cos(a) * 340 * toward, vy: Math.sin(a) * 340, r: 7 };
+    serveT = 0.9; trail = [];
+  }
+
+  Kit.run({
+    slug: 'laser-pong',
+    title: 'Laser Pong',
+    width: W, height: H,
+    best: 'none',
+    modes: ['1 PLAYER  VS CPU', '2 PLAYERS'],
+    players: m => m === 0 ? 1 : 2,
+    help: ['P1: W/S MOVE · SPACE FIRES LASER', 'P2: ↑/↓ MOVE · ENTER FIRES LASER', 'A LASER HIT FREEZES THE OTHER PADDLE', `FIRST TO ${WIN}`],
+    start(mode){
+      vsCpu = mode === 0;
+      paddles = [
+        { x: 30, y: H / 2, score: 0, cd: 0, stun: 0, hue: 330 },
+        { x: W - 30, y: H / 2, score: 0, cd: 1.5, stun: 0, hue: 175 },
+      ];
+      lasers = []; flash = 0;
+      newBall(Math.random() < .5 ? -1 : 1);
+      Kit.hud(`<b>0</b> — <b>0</b>`);
+    },
+    update(dt){
+      flash = Math.max(0, flash - dt);
+      paddles.forEach((p, i) => {
+        p.cd = Math.max(0, p.cd - dt);
+        p.stun = Math.max(0, p.stun - dt);
+        let dy = 0, fire = false;
+        if (i === 1 && vsCpu){
+          // CPU: track the ball when it's coming, drift home when it isn't
+          const target = ball.vx > 0 ? ball.y + Math.sin(performance.now() / 300) * 18 : H / 2;
+          const diff = target - p.y;
+          dy = Math.abs(diff) > 10 ? Math.sign(diff) * 0.78 : 0;
+          const lined = Math.abs(paddles[0].y - p.y) < PH * 0.6;
+          fire = lined && Math.random() < dt * 0.9;
+        } else {
+          const who = vsCpu ? 0 : i;
+          dy = (Kit.held('down', who) ? 1 : 0) - (Kit.held('up', who) ? 1 : 0);
+          fire = Kit.hit('a', who);
+        }
+        if (p.stun > 0){ dy = 0; fire = false; }
+        p.y = Kit.clamp(p.y + dy * 430 * dt, PH / 2, H - PH / 2);
+        if (fire && p.cd === 0){
+          p.cd = LASER_CD;
+          lasers.push({ x: p.x + (i === 0 ? PW : -PW), y: p.y, dir: i === 0 ? 1 : -1, owner: i, hue: p.hue });
+          Kit.sfx(1200, .15, 'sawtooth', .05, 300);
+        }
+      });
+
+      for (const L of lasers){
+        L.x += L.dir * LASER_SPEED * dt;
+        const target = paddles[1 - L.owner];
+        if (!L.dead && Math.abs(L.x - target.x) < PW && Math.abs(L.y - target.y) < PH / 2){
+          L.dead = true; target.stun = STUN; flash = .15;
+          Kit.sfx(160, .3, 'square', .08, 60);
+        }
+      }
+      lasers = lasers.filter(L => !L.dead && L.x > -20 && L.x < W + 20);
+
+      if (serveT > 0){ serveT -= dt; return; }
+      trail.push({ x: ball.x, y: ball.y });
+      if (trail.length > 16) trail.shift();
+
+      ball.x += ball.vx * dt; ball.y += ball.vy * dt;
+      if (ball.y < ball.r){ ball.y = ball.r; ball.vy *= -1; Kit.sfx(300, .04); }
+      if (ball.y > H - ball.r){ ball.y = H - ball.r; ball.vy *= -1; Kit.sfx(300, .04); }
+
+      paddles.forEach((p, i) => {
+        const facing = i === 0 ? ball.vx < 0 : ball.vx > 0;
+        if (facing && Math.abs(ball.x - p.x) < PW / 2 + ball.r && Math.abs(ball.y - p.y) < PH / 2 + ball.r){
+          const off = (ball.y - p.y) / (PH / 2);
+          const speed = Math.min(900, Math.hypot(ball.vx, ball.vy) * 1.06);
+          const ang = off * 1.0;
+          ball.vx = Math.cos(ang) * speed * (i === 0 ? 1 : -1);
+          ball.vy = Math.sin(ang) * speed;
+          ball.x = p.x + (i === 0 ? 1 : -1) * (PW / 2 + ball.r);
+          Kit.sfx(i === 0 ? 520 : 620, .06, 'square', .07);
+        }
+      });
+
+      const scored = ball.x < -20 ? 1 : ball.x > W + 20 ? 0 : -1;
+      if (scored >= 0){
+        paddles[scored].score++;
+        Kit.hud(`<b>${paddles[0].score}</b> — <b>${paddles[1].score}</b>`);
+        Kit.sfx(scored === 0 ? 700 : 250, .3, 'triangle', .1, scored === 0 ? 1100 : 120);
+        if (paddles[scored].score >= WIN){
+          const name = vsCpu ? (scored === 0 ? 'YOU WIN' : 'CPU WINS') : `PLAYER ${scored + 1} WINS`;
+          Kit.end(name, `${paddles[0].score} — ${paddles[1].score}`);
+          return;
+        }
+        newBall(scored === 0 ? 1 : -1);
+      }
+    },
+    draw(c){
+      c.fillStyle = flash > 0 ? '#1d1240' : '#0d0820';
+      c.fillRect(0, 0, W, H);
+      c.fillStyle = 'rgba(255,255,255,.08)';
+      for (let y = 8; y < H; y += 26) c.fillRect(W / 2 - 2, y, 4, 14);
+      if (!paddles) return;
+
+      Kit.text(c, String(paddles[0].score), W / 2 - 70, 50, 42, 'rgba(255,61,129,.55)');
+      Kit.text(c, String(paddles[1].score), W / 2 + 70, 50, 42, 'rgba(52,225,214,.55)');
+
+      // trail
+      trail.forEach((t, i) => {
+        c.globalAlpha = i / trail.length * 0.35;
+        c.fillStyle = '#ffd23f';
+        c.beginPath(); c.arc(t.x, t.y, ball.r * i / trail.length, 0, 7); c.fill();
+      });
+      c.globalAlpha = 1;
+
+      c.save();
+      for (const L of lasers){
+        c.shadowColor = `hsl(${L.hue} 100% 60%)`; c.shadowBlur = 16;
+        c.fillStyle = `hsl(${L.hue} 100% 75%)`;
+        c.fillRect(L.x - 22, L.y - 2, 44, 4);
+      }
+      paddles.forEach((p, i) => {
+        const col = p.stun > 0 ? '#8a85a8' : `hsl(${p.hue} 100% 60%)`;
+        c.shadowColor = col; c.shadowBlur = p.stun > 0 ? 0 : 18;
+        c.fillStyle = col;
+        c.beginPath(); c.roundRect(p.x - PW / 2, p.y - PH / 2, PW, PH, 6); c.fill();
+        // laser charge meter
+        const k = 1 - p.cd / LASER_CD;
+        c.shadowBlur = 0;
+        c.fillStyle = 'rgba(255,255,255,.12)';
+        c.fillRect(i === 0 ? 14 : W - 18, H - 70, 4, 56);
+        c.fillStyle = k >= 1 ? '#ffd23f' : 'rgba(255,210,63,.5)';
+        c.fillRect(i === 0 ? 14 : W - 18, H - 14 - 56 * k, 4, 56 * k);
+      });
+      c.shadowColor = '#ffd23f'; c.shadowBlur = 20;
+      c.fillStyle = (serveT > 0 && Math.sin(performance.now() / 60) > 0) ? 'rgba(255,210,63,.4)' : '#ffd23f';
+      c.beginPath(); c.arc(ball.x, ball.y, ball.r, 0, 7); c.fill();
+      c.restore();
+    },
+  });
+})();
+</script>
+</body>
+</html>

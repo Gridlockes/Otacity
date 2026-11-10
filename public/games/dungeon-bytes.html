@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Dungeon Bytes — Otacity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="stylesheet" href="kit.css">
+<script src="kit.js"></script>
+</head>
+<body>
+<script>
+'use strict';
+(() => {
+  const COLS = 40, ROWS = 21, CELL = 20, TOP = 30;
+  const W = COLS * CELL, H = ROWS * CELL + TOP;
+  const WALL = 0, FLOOR = 1, STAIRS = 2;
+  const SIGHT = 7;
+  const FOES = [
+    { name: 'BIT BAT',   ch: 'b', hue: 285, hp: 3,  atk: 1, xp: 2,  erratic: true, minDepth: 1 },
+    { name: 'SLIME',     ch: 's', hue: 140, hp: 6,  atk: 2, xp: 4,  slow: true,    minDepth: 1 },
+    { name: 'GLITCH',    ch: 'g', hue: 330, hp: 8,  atk: 3, xp: 7,                 minDepth: 2 },
+    { name: 'SKELETON',  ch: 'k', hue: 48,  hp: 12, atk: 4, xp: 10,                minDepth: 3 },
+    { name: 'DAEMON',    ch: 'D', hue: 15,  hp: 22, atk: 6, xp: 20,                minDepth: 5 },
+  ];
+  let map, seen, lit, hero, foes, items, depth, log, repeat, kills, gold, turnAnim;
+
+  // ------------------------------------------------------------ level gen
+  function carve(x, y){ if (x > 0 && y > 0 && x < COLS - 1 && y < ROWS - 1) map[y][x] = FLOOR; }
+  function genLevel(){
+    map = Array.from({ length: ROWS }, () => Array(COLS).fill(WALL));
+    seen = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+    const rooms = [];
+    for (let tries = 0; tries < 200 && rooms.length < 9; tries++){
+      const w = Kit.randInt(4, 9), h = Kit.randInt(3, 6);
+      const x = Kit.randInt(1, COLS - w - 2), y = Kit.randInt(1, ROWS - h - 2);
+      if (rooms.some(r => x < r.x + r.w + 1 && x + w + 1 > r.x && y < r.y + r.h + 1 && y + h + 1 > r.y)) continue;
+      rooms.push({ x, y, w, h, cx: x + (w >> 1), cy: y + (h >> 1) });
+      for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) carve(xx, yy);
+    }
+    if (rooms.length < 4) return genLevel();
+    for (let i = 1; i < rooms.length; i++){
+      const a = rooms[i - 1], b = rooms[i];
+      if (Math.random() < .5){ hLine(a.cx, b.cx, a.cy); vLine(a.cy, b.cy, b.cx); }
+      else { vLine(a.cy, b.cy, a.cx); hLine(a.cx, b.cx, b.cy); }
+    }
+    const start = rooms[0], end = rooms[rooms.length - 1];
+    hero.x = start.cx; hero.y = start.cy;
+    map[end.cy][end.cx] = STAIRS;
+
+    foes = []; items = [];
+    const free = () => {
+      for (;;){
+        const r = Kit.pick(rooms.slice(1));
+        const x = Kit.randInt(r.x, r.x + r.w - 1), y = Kit.randInt(r.y, r.y + r.h - 1);
+        if (map[y][x] === FLOOR && !foes.some(f => f.x === x && f.y === y) && !items.some(it => it.x === x && it.y === y)) return { x, y };
+      }
+    };
+    const pool = FOES.filter(f => f.minDepth <= depth);
+    const nFoes = 4 + depth * 2;
+    for (let i = 0; i < nFoes; i++){
+      const t = Kit.pick(pool), p = free();
+      const hp = t.hp + Math.floor(depth / 2);
+      foes.push({ ...t, ...p, hp, max: hp, awake: false });
+    }
+    for (let i = 0; i < 3 + Kit.randInt(0, 2); i++) items.push({ ...free(), kind: 'gold', amt: Kit.randInt(5, 15) * depth });
+    for (let i = 0; i < 2; i++) items.push({ ...free(), kind: 'potion' });
+    if (Math.random() < .5) items.push({ ...free(), kind: 'blade' });
+    if (Math.random() < .4) items.push({ ...free(), kind: 'shield' });
+    computeFov();
+  }
+  function hLine(x1, x2, y){ for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) carve(x, y); }
+  function vLine(y1, y2, x){ for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y++) carve(x, y); }
+
+  // ------------------------------------------------------------ field of view
+  function clearLine(x0, y0, x1, y1){
+    let dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1, err = dx + dy;
+    for (;;){
+      if (x0 === x1 && y0 === y1) return true;
+      if (map[y0][x0] === WALL && !(x0 === hero.x && y0 === hero.y)) return false;
+      const e2 = 2 * err;
+      if (e2 >= dy){ err += dy; x0 += sx; }
+      if (e2 <= dx){ err += dx; y0 += sy; }
+    }
+  }
+  function computeFov(){
+    lit = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+    for (let y = Math.max(0, hero.y - SIGHT); y <= Math.min(ROWS - 1, hero.y + SIGHT); y++){
+      for (let x = Math.max(0, hero.x - SIGHT); x <= Math.min(COLS - 1, hero.x + SIGHT); x++){
+        if ((x - hero.x) ** 2 + (y - hero.y) ** 2 > SIGHT * SIGHT) continue;
+        if (clearLine(hero.x, hero.y, x, y)){ lit[y][x] = true; seen[y][x] = true; }
+      }
+    }
+  }
+
+  // ------------------------------------------------------------ turns
+  function say(msg, col = '#efe9ff'){ log.unshift({ msg, col, t: 4 }); log.length = Math.min(log.length, 3); }
+  const foeAt = (x, y) => foes.find(f => f.x === x && f.y === y);
+  const walkable = (x, y) => map[y] && map[y][x] !== undefined && map[y][x] !== WALL;
+
+  function heroAct(dx, dy){
+    const nx = hero.x + dx, ny = hero.y + dy;
+    const f = foeAt(nx, ny);
+    if (f){
+      const dmg = Math.max(1, hero.atk + Kit.randInt(-1, 1));
+      f.hp -= dmg; f.awake = true; f.hit = 0.15;
+      Kit.sfx(260, .06, 'square', .07, 140);
+      if (f.hp <= 0){
+        foes.splice(foes.indexOf(f), 1);
+        kills++; Kit.score += f.xp * 10;
+        hero.xp += f.xp;
+        say(`${f.name} DELETED`, '#34e1d6');
+        Kit.sfx(700, .12, 'triangle', .07, 200);
+        if (hero.xp >= hero.next){
+          hero.lvl++; hero.xp -= hero.next; hero.next = Math.floor(hero.next * 1.6);
+          hero.max += 4; hero.hp = hero.max; hero.atk++;
+          say(`LEVEL UP! LV ${hero.lvl}`, '#ffd23f');
+          [523, 659, 784].forEach((fq, i) => setTimeout(() => Kit.sfx(fq, .1, 'triangle', .08), i * 80));
+        }
+      }
+    } else if (walkable(nx, ny)){
+      hero.x = nx; hero.y = ny;
+      const it = items.find(i => i.x === nx && i.y === ny);
+      if (it){
+        items.splice(items.indexOf(it), 1);
+        if (it.kind === 'gold'){ gold += it.amt; Kit.score += it.amt; say(`+${it.amt} GOLD`, '#ffd23f'); Kit.sfx(1200, .05, 'square', .05); }
+        if (it.kind === 'potion'){ const h = Math.min(hero.max - hero.hp, 8 + depth); hero.hp += h; say(`POTION +${h} HP`, '#ff3d81'); Kit.sfx(600, .15, 'sine', .08, 1000); }
+        if (it.kind === 'blade'){ hero.atk += 1; say('SHARPER BLADE  ATK +1', '#34e1d6'); Kit.sfx(900, .1, 'sawtooth', .05); }
+        if (it.kind === 'shield'){ hero.def += 1; say('SHIELD  DEF +1', '#34e1d6'); Kit.sfx(400, .1, 'triangle', .07); }
+      }
+      if (map[ny][nx] === STAIRS){
+        depth++; Kit.score += 100;
+        say(`DEPTH ${depth}`, '#ffd23f');
+        Kit.sfx(330, .3, 'triangle', .08, 90);
+        genLevel(); hud();
+        return;
+      }
+    } else return; // bumped a wall: no turn passes
+
+    computeFov();
+    foesAct();
+    hud();
+  }
+
+  function foesAct(){
+    for (const f of foes){
+      if (lit[f.y][f.x]) f.awake = true;
+      if (!f.awake) continue;
+      if (f.slow && (f.skip = !f.skip)) continue;
+      const ddx = hero.x - f.x, ddy = hero.y - f.y;
+      if (Math.abs(ddx) + Math.abs(ddy) === 1){
+        const dmg = Math.max(0, f.atk + Kit.randInt(-1, 1) - hero.def);
+        hero.hp -= dmg; hero.hurt = 0.2;
+        say(dmg ? `${f.name} HITS -${dmg}` : `${f.name} MISSES`, dmg ? '#ff3d81' : '#a99fd0');
+        if (dmg) Kit.sfx(140, .1, 'sawtooth', .07);
+        if (hero.hp <= 0){
+          hero.hp = 0;
+          Kit.noise(.6, .15);
+          Kit.end('CRASHED', `DEPTH ${depth}  ·  ${kills} KILLS  ·  ${gold} GOLD`);
+          return;
+        }
+        continue;
+      }
+      let steps = [[Math.sign(ddx), 0], [0, Math.sign(ddy)]];
+      if (Math.abs(ddy) > Math.abs(ddx)) steps.reverse();
+      if (f.erratic && Math.random() < .4) steps = [Kit.pick([[1,0],[-1,0],[0,1],[0,-1]])];
+      for (const [sx, sy] of steps){
+        if (!sx && !sy) continue;
+        const nx = f.x + sx, ny = f.y + sy;
+        if (walkable(nx, ny) && !foeAt(nx, ny) && !(nx === hero.x && ny === hero.y)){ f.x = nx; f.y = ny; break; }
+      }
+    }
+  }
+
+  function hud(){ Kit.hud(`DEPTH <b>${depth}</b>`); }
+
+  Kit.run({
+    slug: 'dungeon-bytes',
+    title: 'Dungeon Bytes',
+    width: W, height: H,
+    help: ['DIVE AS DEEP AS YOU CAN', 'MOVE WITH ARROWS / WASD · WALK INTO FOES TO ATTACK', 'A / SPACE WAITS A TURN', 'FIND THE GOLD STAIRS TO GO DEEPER', 'RED VIALS HEAL · BLADES & SHIELDS LAST ALL RUN'],
+    start(){
+      depth = 1; kills = 0; gold = 0; log = [];
+      hero = { x: 0, y: 0, hp: 20, max: 20, atk: 3, def: 0, lvl: 1, xp: 0, next: 10, hurt: 0 };
+      repeat = { dir: null, t: 0 };
+      genLevel(); hud();
+      say('FIND THE STAIRS. GO DEEPER.', '#a99fd0');
+    },
+    update(dt){
+      for (const l of log) l.t -= dt;
+      hero.hurt = Math.max(0, hero.hurt - dt);
+      for (const f of foes) if (f.hit) f.hit = Math.max(0, f.hit - dt);
+
+      const dirs = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+      let acted = false;
+      for (const k of Object.keys(dirs)){
+        if (Kit.hit(k)){ repeat = { dir: k, t: 0.22 }; heroAct(...dirs[k]); acted = true; break; }
+      }
+      if (!acted && repeat.dir && Kit.held(repeat.dir)){
+        repeat.t -= dt;
+        if (repeat.t <= 0){ repeat.t = 0.09; heroAct(...dirs[repeat.dir]); }
+      } else if (!acted) repeat.dir = null;
+      if (Kit.hit('a')){ computeFov(); foesAct(); hud(); }
+    },
+    draw(c){
+      c.fillStyle = '#0a0618';
+      c.fillRect(0, 0, W, H);
+      if (!map) return;
+      c.save();
+      c.translate(0, TOP);
+      for (let y = 0; y < ROWS; y++){
+        for (let x = 0; x < COLS; x++){
+          if (!seen[y][x]) continue;
+          const v = map[y][x], on = lit[y][x];
+          const px = x * CELL, py = y * CELL;
+          if (v === WALL){
+            c.fillStyle = on ? '#3a2766' : '#1d1438';
+            c.fillRect(px, py, CELL, CELL);
+            c.fillStyle = on ? 'rgba(255,255,255,.07)' : 'rgba(255,255,255,.02)';
+            c.fillRect(px, py, CELL, 3);
+          } else {
+            c.fillStyle = on ? '#1a1236' : '#110b24';
+            c.fillRect(px, py, CELL, CELL);
+            c.fillStyle = on ? 'rgba(255,255,255,.07)' : 'rgba(255,255,255,.025)';
+            c.fillRect(px + 9, py + 9, 2, 2);
+            if (v === STAIRS) Kit.text(c, '>', px + CELL / 2, py + CELL / 2 + 1, 16, on ? '#ffd23f' : '#7a6a2a');
+          }
+        }
+      }
+      for (const it of items){
+        if (!lit[it.y][it.x]) continue;
+        const px = it.x * CELL + CELL / 2, py = it.y * CELL + CELL / 2;
+        const g = { gold: ['$', '#ffd23f'], potion: ['!', '#ff3d81'], blade: ['/', '#34e1d6'], shield: [']', '#8fd3ff'] }[it.kind];
+        Kit.text(c, g[0], px, py + 1, 15, g[1]);
+      }
+      for (const f of foes){
+        if (!lit[f.y][f.x]) continue;
+        const px = f.x * CELL + CELL / 2, py = f.y * CELL + CELL / 2;
+        Kit.text(c, f.ch, px, py + 1, 16, f.hit ? '#fff' : `hsl(${f.hue} 90% 62%)`);
+        if (f.hp < f.max){
+          c.fillStyle = '#300'; c.fillRect(f.x * CELL + 2, f.y * CELL, CELL - 4, 2);
+          c.fillStyle = '#ff3d81'; c.fillRect(f.x * CELL + 2, f.y * CELL, (CELL - 4) * f.hp / f.max, 2);
+        }
+      }
+      c.save();
+      c.shadowColor = '#34e1d6'; c.shadowBlur = 12;
+      Kit.text(c, '@', hero.x * CELL + CELL / 2, hero.y * CELL + CELL / 2 + 1, 17, hero.hurt ? '#ff3d81' : '#34e1d6');
+      c.restore();
+      c.restore();
+
+      // status strip
+      c.fillStyle = '#150c26'; c.fillRect(0, 0, W, TOP);
+      Kit.text(c, `HP`, 12, 15, 11, '#a99fd0', 'left');
+      c.fillStyle = '#2a1a4f'; c.fillRect(36, 9, 120, 12);
+      c.fillStyle = hero.hp / hero.max < .3 ? '#ff3d81' : '#34e1d6';
+      c.fillRect(36, 9, 120 * hero.hp / hero.max, 12);
+      Kit.text(c, `${hero.hp}/${hero.max}`, 164, 15, 11, '#efe9ff', 'left');
+      Kit.text(c, `LV ${hero.lvl}  ATK ${hero.atk}  DEF ${hero.def}  GOLD ${gold}`, 240, 15, 11, '#a99fd0', 'left');
+      const top = log[0];
+      if (top && top.t > 0){ c.globalAlpha = Math.min(1, top.t); Kit.text(c, top.msg, W - 12, 15, 11, top.col, 'right'); c.globalAlpha = 1; }
+    },
+  });
+})();
+</script>
+</body>
+</html>

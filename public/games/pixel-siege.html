@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Pixel Siege — Otacity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="stylesheet" href="kit.css">
+<script src="kit.js"></script>
+</head>
+<body>
+<script>
+'use strict';
+(() => {
+  const W = 800, H = 450, G = 260, BLAST = 34, MAX_HP = 100;
+  let ground, forts, turn, shell, wind, booms, debris, vsCpu, phase, phaseT, cpuPlan, rounds;
+
+  function makeGround(){
+    ground = new Float32Array(W);
+    const a = Kit.rand(0, 6), b = Kit.rand(0, 6), h = Kit.rand(40, 90);
+    for (let x = 0; x < W; x++){
+      ground[x] = 300 - Math.sin(x / 120 + a) * h * .6 - Math.sin(x / 47 + b) * 18 - Math.sin(x / W * Math.PI) * h;
+    }
+  }
+  const groundAt = x => ground[Kit.clamp(Math.round(x), 0, W - 1)];
+
+  function settle(f){ f.y = groundAt(f.x); }
+
+  function startTurn(){
+    wind = Kit.rand(-60, 60);
+    phase = 'aim'; phaseT = 0; cpuPlan = null;
+    const f = forts[turn];
+    Kit.hud(`<b>P${turn + 1}</b> TURN`);
+    if (vsCpu && turn === 1) cpuPlan = planShot(f, forts[0]);
+  }
+
+  // CPU: try a sweep of shots in a dry-run sim and keep the closest, then add some wobble
+  function planShot(me, foe){
+    let bestShot = null;
+    for (let ang = 20; ang <= 80; ang += 4){
+      for (let pow = 200; pow <= 560; pow += 15){
+        const land = simulate(me, ang, pow);
+        const d = Math.abs(land - foe.x);
+        if (!bestShot || d < bestShot.d) bestShot = { ang, pow, d };
+      }
+    }
+    const wobble = Math.max(1, 6 - rounds);
+    return { ang: bestShot.ang + Kit.rand(-wobble, wobble), pow: bestShot.pow + Kit.rand(-wobble * 6, wobble * 6) };
+  }
+  function simulate(me, angDeg, pow){
+    const dirn = me === forts[0] ? 1 : -1;
+    const a = angDeg * Math.PI / 180;
+    let x = me.x, y = me.y - 16, vx = Math.cos(a) * pow * dirn, vy = -Math.sin(a) * pow;
+    for (let i = 0; i < 600; i++){
+      const dt = 1 / 60;
+      vx += wind * dt; vy += G * dt; x += vx * dt; y += vy * dt;
+      if (x < 0 || x >= W) return x;
+      if (y >= groundAt(x)) return x;
+    }
+    return x;
+  }
+
+  function fire(f){
+    const dirn = f === forts[0] ? 1 : -1;
+    const a = f.ang * Math.PI / 180;
+    shell = { x: f.x + Math.cos(a) * 18 * dirn, y: f.y - 16 - Math.sin(a) * 18, vx: Math.cos(a) * f.pow * dirn, vy: -Math.sin(a) * f.pow, trail: [] };
+    phase = 'flight';
+    Kit.sfx(180, .25, 'sawtooth', .08, 60);
+  }
+
+  function explode(x, y){
+    for (let i = Math.max(0, Math.floor(x - BLAST)); i < Math.min(W, Math.ceil(x + BLAST)); i++){
+      const dy = Math.sqrt(BLAST * BLAST - (i - x) ** 2);
+      if (ground[i] < y + dy) ground[i] = Math.max(ground[i], y + dy);
+      ground[i] = Math.min(ground[i], H - 4);
+    }
+    booms.push({ x, y, t: 0.5 });
+    for (let i = 0; i < 26; i++){
+      const a = Kit.rand(Math.PI, Math.PI * 2), s = Kit.rand(80, 280);
+      debris.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: Kit.rand(.6, 1.2) });
+    }
+    Kit.noise(.5, .2);
+    forts.forEach((f, i) => {
+      const d = Math.hypot(f.x - x, f.y - 8 - y);
+      if (d < BLAST * 1.6){
+        const dmg = Math.round(55 * (1 - d / (BLAST * 1.6)));
+        f.hp = Math.max(0, f.hp - dmg);
+        f.flash = .4;
+        if (vsCpu && i === 1) Kit.score += dmg;
+      }
+      settle(f);
+    });
+  }
+
+  Kit.run({
+    slug: 'pixel-siege',
+    title: 'Pixel Siege',
+    width: W, height: H,
+    best: 'high',
+    bestCounts: () => vsCpu,
+    scoreLabel: 'DMG',
+    modes: ['1 PLAYER  VS CPU', '2 PLAYERS  (TAKE TURNS)'],
+    help: ['←/→ AIM · ↑/↓ POWER · A / SPACE FIRE', 'MIND THE WIND. SHOTS CARVE THE HILLS.', 'FIRST FORT TO FALL LOSES'],
+    start(mode){
+      vsCpu = mode === 0;
+      makeGround();
+      forts = [
+        { x: Kit.randInt(60, 140), hp: MAX_HP, ang: 45, pow: 380, hue: 330, flash: 0 },
+        { x: Kit.randInt(W - 140, W - 60), hp: MAX_HP, ang: 45, pow: 380, hue: 175, flash: 0 },
+      ];
+      // flatten a pad under each fort
+      for (const f of forts){
+        const base = groundAt(f.x);
+        for (let x = f.x - 18; x <= f.x + 18; x++) ground[x] = base;
+        settle(f);
+      }
+      booms = []; debris = []; shell = null; rounds = 0;
+      turn = 0;
+      startTurn();
+    },
+    update(dt){
+      for (const b of booms) b.t -= dt;
+      booms = booms.filter(b => b.t > 0);
+      for (const d of debris){ d.vy += G * dt; d.x += d.vx * dt; d.y += d.vy * dt; d.life -= dt; }
+      debris = debris.filter(d => d.life > 0);
+      for (const f of forts) f.flash = Math.max(0, f.flash - dt);
+
+      const f = forts[turn];
+      if (phase === 'aim'){
+        if (cpuPlan){
+          phaseT += dt;
+          f.ang += Kit.clamp(cpuPlan.ang - f.ang, -60 * dt, 60 * dt);
+          f.pow += Kit.clamp(cpuPlan.pow - f.pow, -300 * dt, 300 * dt);
+          if (phaseT > 1.2 && Math.abs(cpuPlan.ang - f.ang) < .5 && Math.abs(cpuPlan.pow - f.pow) < 2) fire(f);
+        } else {
+          const p = 0; // hot-seat: both players share the same controls
+          const fine = Kit.held('b', p) ? 0.25 : 1;
+          if (Kit.held('left', p))  f.ang = Kit.clamp(f.ang + (turn === 0 ? -1 : 1) * 50 * dt * fine, 5, 85);
+          if (Kit.held('right', p)) f.ang = Kit.clamp(f.ang + (turn === 0 ? 1 : -1) * 50 * dt * fine, 5, 85);
+          if (Kit.held('up', p))    f.pow = Kit.clamp(f.pow + 220 * dt * fine, 120, 600);
+          if (Kit.held('down', p))  f.pow = Kit.clamp(f.pow - 220 * dt * fine, 120, 600);
+          if (Kit.hit('a', p)) fire(f);
+        }
+      } else if (phase === 'flight'){
+        // sub-step so fast shells don't tunnel through thin hills
+        for (let s = 0; s < 4 && shell; s++){
+          const h = dt / 4;
+          shell.vx += wind * h; shell.vy += G * h;
+          shell.x += shell.vx * h; shell.y += shell.vy * h;
+          const hitFort = forts.some(o => Math.abs(o.x - shell.x) < 16 && shell.y > o.y - 22 && shell.y < o.y + 2);
+          if (shell.x < -50 || shell.x > W + 50 || shell.y > H){ shell = null; }
+          else if (hitFort || (shell.x >= 0 && shell.x < W && shell.y >= groundAt(shell.x))){ explode(shell.x, shell.y); shell = null; }
+        }
+        if (shell){ shell.trail.push({ x: shell.x, y: shell.y }); if (shell.trail.length > 30) shell.trail.shift(); }
+        if (!shell){ phase = 'after'; phaseT = 0.9; }
+      } else if (phase === 'after'){
+        phaseT -= dt;
+        if (phaseT <= 0){
+          const dead = forts.findIndex(o => o.hp <= 0);
+          if (dead >= 0){
+            const winner = 1 - dead;
+            const name = vsCpu ? (winner === 0 ? 'SIEGE WON' : 'FORT FALLEN') : `PLAYER ${winner + 1} WINS`;
+            Kit.end(name, vsCpu ? `DAMAGE DEALT ${Kit.score}` : '');
+            return;
+          }
+          turn = 1 - turn;
+          if (turn === 0) rounds++;
+          startTurn();
+        }
+      }
+    },
+    draw(c){
+      const sky = c.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, '#1b1030'); sky.addColorStop(1, '#2a1240');
+      c.fillStyle = sky; c.fillRect(0, 0, W, H);
+      if (!ground) return;
+
+      // ground as chunky pixels
+      for (let x = 0; x < W; x += 4){
+        const top = Math.floor(groundAt(x + 2) / 4) * 4;
+        c.fillStyle = '#3b2a6a'; c.fillRect(x, top, 4, H - top);
+        c.fillStyle = '#34e1d6'; c.fillRect(x, top, 4, 4);
+        c.fillStyle = 'rgba(0,0,0,.25)'; c.fillRect(x, top + 16, 4, H - top);
+      }
+
+      forts.forEach((f, i) => {
+        const dirn = i === 0 ? 1 : -1;
+        const col = f.flash > 0 ? '#fff' : `hsl(${f.hue} 90% 60%)`;
+        c.fillStyle = col;
+        c.fillRect(f.x - 14, f.y - 14, 28, 14);
+        c.fillRect(f.x - 14, f.y - 20, 6, 6); c.fillRect(f.x - 3, f.y - 20, 6, 6); c.fillRect(f.x + 8, f.y - 20, 6, 6);
+        const a = f.ang * Math.PI / 180;
+        c.strokeStyle = col; c.lineWidth = 5; c.lineCap = 'round';
+        c.beginPath(); c.moveTo(f.x, f.y - 16); c.lineTo(f.x + Math.cos(a) * 20 * dirn, f.y - 16 - Math.sin(a) * 20); c.stroke();
+        // hp
+        c.fillStyle = 'rgba(0,0,0,.4)'; c.fillRect(f.x - 20, f.y - 34, 40, 5);
+        c.fillStyle = f.hp > 35 ? '#34e1d6' : '#ff3d81'; c.fillRect(f.x - 20, f.y - 34, 40 * f.hp / MAX_HP, 5);
+
+        if (i === turn && phase === 'aim'){
+          c.setLineDash([3, 6]); c.lineWidth = 1.5; c.strokeStyle = 'rgba(255,255,255,.35)';
+          c.beginPath(); c.moveTo(f.x, f.y - 16); c.lineTo(f.x + Math.cos(a) * (30 + f.pow / 8) * dirn, f.y - 16 - Math.sin(a) * (30 + f.pow / 8)); c.stroke();
+          c.setLineDash([]);
+        }
+      });
+
+      if (shell){
+        shell.trail.forEach((t, i) => { c.fillStyle = `rgba(255,210,63,${i / 60})`; c.fillRect(t.x - 1.5, t.y - 1.5, 3, 3); });
+        c.fillStyle = '#ffd23f'; c.beginPath(); c.arc(shell.x, shell.y, 4, 0, 7); c.fill();
+      }
+      for (const b of booms){
+        c.fillStyle = `rgba(255,${120 + b.t * 200},63,${b.t * 1.6})`;
+        c.beginPath(); c.arc(b.x, b.y, BLAST * (1.3 - b.t), 0, 7); c.fill();
+      }
+      c.fillStyle = '#c9b6ff';
+      for (const d of debris) c.fillRect(d.x - 2, d.y - 2, 4, 4);
+
+      // panel: whose turn, angle, power, wind
+      const f = forts[turn];
+      Kit.text(c, vsCpu && turn === 1 ? 'CPU AIMING…' : `PLAYER ${turn + 1}`, W / 2, 24, 14, `hsl(${f.hue} 90% 65%)`);
+      Kit.text(c, `ANGLE ${Math.round(f.ang)}°   POWER ${Math.round(f.pow / 6)}`, W / 2, 46, 11, '#a99fd0');
+      const wx = W / 2, wy = 68, wl = wind * 1.2;
+      Kit.text(c, 'WIND', wx - 80, wy, 10, '#a99fd0', 'right');
+      c.strokeStyle = '#ffd23f'; c.lineWidth = 3;
+      c.beginPath(); c.moveTo(wx, wy); c.lineTo(wx + wl, wy); c.stroke();
+      if (Math.abs(wl) > 4){
+        c.beginPath(); c.moveTo(wx + wl, wy); c.lineTo(wx + wl - Math.sign(wl) * 7, wy - 5); c.lineTo(wx + wl - Math.sign(wl) * 7, wy + 5); c.closePath(); c.fillStyle = '#ffd23f'; c.fill();
+      }
+    },
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,12 +1,13 @@
 {
-  "name": "gamegrid",
+  "name": "otacity",
   "version": "1.0.0",
   "description": "Retro arcade game hub — Express backend + frontend with a buffered boot intro.",
   "type": "commonjs",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "prefetch": "node scripts/prefetch-audio.js"
+    "prefetch": "node scripts/prefetch-audio.js",
+    "build": "node scripts/build.js"
   },
   "engines": {
     "node": ">=18"

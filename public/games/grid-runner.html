@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Grid Runner — Otacity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="stylesheet" href="kit.css">
+<script src="kit.js"></script>
+</head>
+<body>
+<script>
+'use strict';
+(() => {
+  const W = 800, H = 450;
+  const GRAV = 2200, JUMP = 780, PX = 170, PSIZE = 26;
+  let player, plats, orbs, spikes, speed, dist, camX, genX, particles, jumpsLeft, coyote, buffer;
+
+  function addSegment(){
+    const last = plats[plats.length - 1];
+    const gap = Kit.rand(70, 120 + speed * 0.12);
+    const w = Kit.rand(180, 420);
+    const y = Kit.clamp(last.y + Kit.rand(-90, 90), 200, 390);
+    const p = { x: last.x + last.w + gap, y, w };
+    plats.push(p);
+    if (w > 240 && Math.random() < 0.55 + Math.min(.3, dist / 40000)){
+      const sx = p.x + Kit.rand(80, w - 60);
+      spikes.push({ x: sx, y: p.y, n: Math.random() < .3 ? 2 : 1 });
+    }
+    if (Math.random() < 0.6){
+      const n = Kit.randInt(3, 5);
+      for (let i = 0; i < n; i++) orbs.push({ x: p.x + 40 + i * 34, y: p.y - 70 - Math.sin(i / (n - 1) * Math.PI) * 40, got: false });
+    }
+    genX = p.x + w;
+  }
+
+  function puff(x, y, hue, n = 10){
+    for (let i = 0; i < n; i++){
+      const a = Kit.rand(Math.PI, Math.PI * 2);
+      particles.push({ x, y, vx: Math.cos(a) * Kit.rand(40, 180), vy: Math.sin(a) * Kit.rand(40, 200), life: .5, hue });
+    }
+  }
+
+  Kit.run({
+    slug: 'grid-runner',
+    title: 'Grid Runner',
+    width: W, height: H,
+    help: ['YOU RUN ON YOUR OWN — JUST JUMP', 'A / SPACE / ↑ TO JUMP · TAP AGAIN TO DOUBLE JUMP', 'HOLD FOR A HIGHER JUMP', 'GRAB ORBS · DODGE SPIKES · DON\'T FALL'],
+    start(){
+      plats = [{ x: -200, y: 340, w: 900 }];
+      spikes = []; orbs = []; particles = [];
+      speed = 330; dist = 0; camX = 0;
+      player = { x: PX, y: 340 - PSIZE, vy: 0, ground: true, rot: 0 };
+      jumpsLeft = 2; coyote = 0; buffer = 0;
+      while (plats[plats.length - 1].x < 2000) addSegment();
+    },
+    update(dt){
+      speed = Math.min(720, speed + dt * 9);
+      const dx = speed * dt;
+      dist += dx;
+      camX += dx;
+      player.x += dx;
+      while (genX < camX + W + 400) addSegment();
+      plats = plats.filter(p => p.x + p.w > camX - 100);
+      spikes = spikes.filter(s => s.x > camX - 100);
+      orbs = orbs.filter(o => o.x > camX - 100);
+
+      const jumpPressed = Kit.hit('a') || Kit.hit('up');
+      const jumpHeld = Kit.held('a') || Kit.held('up');
+      if (jumpPressed) buffer = 0.12;
+      buffer -= dt; coyote -= dt;
+
+      if (buffer > 0 && (player.ground || coyote > 0 || jumpsLeft > 0)){
+        const first = player.ground || coyote > 0;
+        if (!first) jumpsLeft--;
+        else jumpsLeft = 1;
+        player.vy = -JUMP * (first ? 1 : 0.85);
+        player.ground = false; coyote = 0; buffer = 0;
+        Kit.sfx(first ? 420 : 560, .1, 'square', .06, first ? 760 : 980);
+        puff(player.x + PSIZE / 2, player.y + PSIZE, 185, 6);
+      }
+      // short hop when the button is released early
+      const g = (!jumpHeld && player.vy < 0) ? GRAV * 2.2 : GRAV;
+      const prevBottom = player.y + PSIZE;
+      player.vy = Math.min(1400, player.vy + g * dt);
+      player.y += player.vy * dt;
+
+      const wasGround = player.ground;
+      player.ground = false;
+      for (const p of plats){
+        if (player.x + PSIZE <= p.x || player.x >= p.x + p.w) continue;
+        if (player.vy >= 0 && prevBottom <= p.y + 1 && player.y + PSIZE >= p.y){
+          player.y = p.y - PSIZE; player.vy = 0; player.ground = true; jumpsLeft = 2;
+          if (!wasGround) puff(player.x + PSIZE / 2, p.y, 285, 5);
+        } else if (player.y + PSIZE > p.y + 6 && player.y < p.y + 400 && player.x + PSIZE - dx * 1.5 <= p.x + 2){
+          return die('SMASHED');
+        }
+      }
+      if (wasGround && !player.ground && player.vy >= 0) coyote = 0.08;
+      player.rot = player.ground ? 0 : player.rot + dt * 9;
+
+      for (const s of spikes){
+        const sw = 22 * s.n;
+        if (player.x + PSIZE - 4 > s.x && player.x + 4 < s.x + sw && player.y + PSIZE > s.y - 16) return die('SPIKED');
+      }
+      for (const o of orbs){
+        if (!o.got && Math.abs(player.x + PSIZE / 2 - o.x) < 22 && Math.abs(player.y + PSIZE / 2 - o.y) < 22){
+          o.got = true; Kit.score += 25;
+          Kit.sfx(990, .06, 'triangle', .06, 1400);
+          puff(o.x, o.y, 48, 6);
+        }
+      }
+      if (player.y > H + 60) return die('FELL');
+
+      for (const p of particles){ p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 600 * dt; p.life -= dt; }
+      particles = particles.filter(p => p.life > 0);
+
+      Kit.score += Math.floor(dist / 10) - Math.floor((dist - dx) / 10);
+    },
+    draw(c){
+      // sky + parallax grid
+      const sky = c.createLinearGradient(0, 0, 0, H);
+      sky.addColorStop(0, '#1b1030'); sky.addColorStop(1, '#0d0820');
+      c.fillStyle = sky; c.fillRect(0, 0, W, H);
+      const cam = camX || 0;
+      c.strokeStyle = 'rgba(52,225,214,.07)';
+      c.lineWidth = 1;
+      const off = -(cam * 0.3) % 40;
+      for (let x = off; x < W; x += 40){ c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke(); }
+      for (let y = 0; y < H; y += 40){ c.beginPath(); c.moveTo(0, y); c.lineTo(W, y); c.stroke(); }
+      // far skyline
+      c.fillStyle = 'rgba(255,61,129,.08)';
+      for (let i = -1; i < 12; i++){
+        const bx = i * 90 - (cam * 0.15) % 90;
+        const bh = 60 + ((i * 7919 + Math.floor(cam * 0.15 / 90) * 31) % 5) * 22;
+        c.fillRect(bx, H - 90 - bh, 70, bh + 90);
+      }
+      if (!plats) return;
+
+      c.save();
+      c.translate(-cam, 0);
+      for (const p of plats){
+        c.fillStyle = '#221540';
+        c.fillRect(p.x, p.y, p.w, H - p.y);
+        c.fillStyle = '#34e1d6';
+        c.shadowColor = '#34e1d6'; c.shadowBlur = 12;
+        c.fillRect(p.x, p.y, p.w, 3);
+        c.shadowBlur = 0;
+        c.strokeStyle = 'rgba(255,255,255,.05)';
+        for (let x = p.x + 20; x < p.x + p.w; x += 20){ c.beginPath(); c.moveTo(x, p.y + 3); c.lineTo(x, H); c.stroke(); }
+      }
+      c.fillStyle = '#ff3d81';
+      c.shadowColor = '#ff3d81'; c.shadowBlur = 10;
+      for (const s of spikes){
+        for (let i = 0; i < s.n; i++){
+          c.beginPath(); c.moveTo(s.x + i * 22, s.y); c.lineTo(s.x + i * 22 + 11, s.y - 20); c.lineTo(s.x + i * 22 + 22, s.y); c.fill();
+        }
+      }
+      c.fillStyle = '#ffd23f'; c.shadowColor = '#ffd23f';
+      const t = performance.now() / 1000;
+      for (const o of orbs){
+        if (o.got) continue;
+        c.beginPath(); c.arc(o.x, o.y + Math.sin(t * 4 + o.x) * 3, 7, 0, 7); c.fill();
+      }
+      c.shadowBlur = 0;
+
+      for (const p of particles){
+        c.globalAlpha = p.life * 2;
+        c.fillStyle = `hsl(${p.hue} 100% 65%)`;
+        c.fillRect(p.x - 2, p.y - 2, 4, 4);
+      }
+      c.globalAlpha = 1;
+
+      // the runner: a spinning cube
+      c.save();
+      c.translate(player.x + PSIZE / 2, player.y + PSIZE / 2);
+      c.rotate(player.rot);
+      c.shadowColor = '#ff3d81'; c.shadowBlur = 18;
+      c.fillStyle = '#ff3d81';
+      c.fillRect(-PSIZE / 2, -PSIZE / 2, PSIZE, PSIZE);
+      c.fillStyle = '#0d0820';
+      c.fillRect(2, -6, 5, 5);
+      c.restore();
+      c.restore();
+
+      Kit.text(c, `${Math.floor(speed / 3.3)} KM/H`, W - 16, 22, 11, '#a99fd0', 'right');
+    },
+  });
+
+  function die(why){
+    Kit.noise(.4, .15);
+    Kit.sfx(300, .4, 'sawtooth', .07, 60);
+    Kit.end(why, `DISTANCE ${Math.floor(dist / 10)}M  ·  SCORE ${Kit.score}`);
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Block Storm — Otacity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="stylesheet" href="kit.css">
+<script src="kit.js"></script>
+</head>
+<body>
+<script>
+'use strict';
+(() => {
+  const W = 800, H = 450;
+  const COLS = 10, ROWS = 20, CELL = 20;
+  const BX = (W - COLS * CELL) / 2, BY = (H - ROWS * CELL) / 2;
+  const STORM_EVERY = 25; // seconds between storm strikes
+  const SHAPES = {
+    I: { hue: 185, cells: [[0,1],[1,1],[2,1],[3,1]] },
+    O: { hue: 48,  cells: [[1,0],[2,0],[1,1],[2,1]] },
+    T: { hue: 285, cells: [[1,0],[0,1],[1,1],[2,1]] },
+    S: { hue: 140, cells: [[1,0],[2,0],[0,1],[1,1]] },
+    Z: { hue: 350, cells: [[0,0],[1,0],[1,1],[2,1]] },
+    J: { hue: 225, cells: [[0,0],[0,1],[1,1],[2,1]] },
+    L: { hue: 25,  cells: [[2,0],[0,1],[1,1],[2,1]] },
+  };
+  const GARBAGE_HUE = -1;
+  let board, piece, bag, next, fallT, lines, level, stormT, strike, das, clearing, shake;
+
+  function refill(){ bag = Object.keys(SHAPES).sort(() => Math.random() - .5); }
+  function draw7(){ if (!bag.length) refill(); return bag.pop(); }
+
+  function spawn(){
+    const k = next; next = draw7();
+    piece = { k, cells: SHAPES[k].cells.map(c => [...c]), x: 3, y: k === 'I' ? -1 : 0 };
+    if (collides(piece.cells, piece.x, piece.y)){
+      Kit.noise(.6, .15);
+      Kit.end('STORM WINS', `LINES ${lines}  ·  LEVEL ${level}`);
+    }
+  }
+
+  function collides(cells, px, py){
+    return cells.some(([cx, cy]) => {
+      const x = px + cx, y = py + cy;
+      return x < 0 || x >= COLS || y >= ROWS || (y >= 0 && board[y][x] !== null);
+    });
+  }
+
+  function rotate(dirn){
+    if (piece.k === 'O') return;
+    const size = piece.k === 'I' ? 4 : 3;
+    const rot = piece.cells.map(([x, y]) => dirn > 0 ? [size - 1 - y, x] : [y, size - 1 - x]);
+    for (const [kx, ky] of [[0,0],[-1,0],[1,0],[0,-1],[-2,0],[2,0]]){
+      if (!collides(rot, piece.x + kx, piece.y + ky)){
+        piece.cells = rot; piece.x += kx; piece.y += ky;
+        Kit.sfx(480, .03, 'square', .05);
+        return;
+      }
+    }
+  }
+
+  function lock(){
+    for (const [cx, cy] of piece.cells){
+      const y = piece.y + cy;
+      if (y >= 0) board[y][piece.x + cx] = SHAPES[piece.k].hue;
+    }
+    const full = [];
+    board.forEach((row, y) => { if (row.every(v => v !== null)) full.push(y); });
+    if (full.length){
+      clearing = { rows: full, t: 0.18 };
+      const pts = [0, 100, 300, 500, 800][full.length] * level;
+      Kit.score += pts;
+      Kit.sfx(600 + full.length * 120, .18, 'triangle', .1, 1400);
+    } else {
+      Kit.sfx(160, .05, 'square', .05);
+    }
+    piece = null;
+  }
+
+  function finishClear(){
+    for (const y of clearing.rows){ board.splice(y, 1); board.unshift(Array(COLS).fill(null)); }
+    lines += clearing.rows.length;
+    level = 1 + Math.floor(lines / 10);
+    clearing = null;
+    hud();
+  }
+
+  function storm(){
+    // lightning pushes a junk row up from below, with a single gap
+    const gap = Kit.randInt(0, COLS - 1);
+    board.shift();
+    board.push(Array.from({ length: COLS }, (_, i) => i === gap ? null : GARBAGE_HUE));
+    if (piece && collides(piece.cells, piece.x, piece.y)) piece.y--;
+    strike = { t: 0.35, x: BX + gap * CELL + CELL / 2 };
+    shake = 0.3;
+    Kit.noise(.5, .2);
+  }
+
+  function hud(){ Kit.hud(`LINES <b>${lines}</b>`); }
+  const gravity = () => Math.max(0.05, 0.8 * Math.pow(0.85, level - 1));
+
+  Kit.run({
+    slug: 'block-storm',
+    title: 'Block Storm',
+    width: W, height: H,
+    help: ['←/→ MOVE · ↓ SOFT DROP · B / X HARD DROP', '↑ OR A ROTATE', 'CLEAR LINES. EVERY 25s A STORM PUSHES', 'A JUNK ROW UP FROM THE BOTTOM'],
+    start(){
+      board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+      refill(); next = draw7();
+      lines = 0; level = 1; fallT = 0; stormT = STORM_EVERY; strike = null; clearing = null; shake = 0;
+      das = { dir: 0, t: 0 };
+      hud();
+      spawn();
+    },
+    update(dt){
+      if (strike && (strike.t -= dt) <= 0) strike = null;
+      shake = Math.max(0, shake - dt);
+      if (clearing){ if ((clearing.t -= dt) <= 0) finishClear(); return; }
+      if (!piece){ spawn(); if (Kit.state !== 'play') return; }
+
+      stormT -= dt;
+      if (stormT <= 0){ stormT = Math.max(10, STORM_EVERY - level); storm(); }
+
+      if (Kit.hit('up') || Kit.hit('a')) rotate(1);
+
+      // sideways with auto-repeat
+      const dir = (Kit.held('right') ? 1 : 0) - (Kit.held('left') ? 1 : 0);
+      if (dir !== das.dir){ das = { dir, t: 0.16 }; if (dir && !collides(piece.cells, piece.x + dir, piece.y)) piece.x += dir; }
+      else if (dir){
+        das.t -= dt;
+        while (das.t <= 0){ das.t += 0.045; if (!collides(piece.cells, piece.x + dir, piece.y)) piece.x += dir; }
+      }
+
+      if (Kit.hit('b')){
+        let d = 0;
+        while (!collides(piece.cells, piece.x, piece.y + 1)){ piece.y++; d++; }
+        Kit.score += d * 2;
+        shake = 0.08;
+        lock();
+        return;
+      }
+
+      fallT += dt * (Kit.held('down') ? 12 : 1);
+      while (piece && fallT >= gravity()){
+        fallT -= gravity();
+        if (collides(piece.cells, piece.x, piece.y + 1)) lock();
+        else { piece.y++; if (Kit.held('down')) Kit.score += 1; }
+      }
+    },
+    draw(c){
+      c.fillStyle = '#0d0820';
+      c.fillRect(0, 0, W, H);
+      if (!board) return;
+      c.save();
+      if (shake > 0) c.translate(Kit.rand(-3, 3), Kit.rand(-3, 3));
+
+      // well
+      c.fillStyle = 'rgba(255,255,255,.03)';
+      c.fillRect(BX, BY, COLS * CELL, ROWS * CELL);
+      c.strokeStyle = 'rgba(255,255,255,.12)';
+      c.strokeRect(BX - .5, BY - .5, COLS * CELL + 1, ROWS * CELL + 1);
+
+      const block = (x, y, hue, alpha = 1) => {
+        c.globalAlpha = alpha;
+        c.fillStyle = hue === GARBAGE_HUE ? '#4a4366' : `hsl(${hue} 85% 58%)`;
+        c.fillRect(x + 1, y + 1, CELL - 2, CELL - 2);
+        c.fillStyle = 'rgba(255,255,255,.25)';
+        c.fillRect(x + 1, y + 1, CELL - 2, 3);
+        c.globalAlpha = 1;
+      };
+
+      board.forEach((row, y) => row.forEach((v, x) => {
+        if (v === null) return;
+        const flashing = clearing && clearing.rows.includes(y);
+        if (flashing){ c.fillStyle = '#fff'; c.fillRect(BX + x * CELL, BY + y * CELL, CELL, CELL); }
+        else block(BX + x * CELL, BY + y * CELL, v);
+      }));
+
+      if (piece){
+        let gy = piece.y;
+        while (!collides(piece.cells, piece.x, gy + 1)) gy++;
+        for (const [cx, cy] of piece.cells){
+          if (gy + cy >= 0) block(BX + (piece.x + cx) * CELL, BY + (gy + cy) * CELL, SHAPES[piece.k].hue, 0.2);
+          if (piece.y + cy >= 0) block(BX + (piece.x + cx) * CELL, BY + (piece.y + cy) * CELL, SHAPES[piece.k].hue);
+        }
+      }
+
+      // side panels
+      const RX = BX + COLS * CELL + 40;
+      Kit.text(c, 'NEXT', RX, BY + 10, 12, '#a99fd0', 'left');
+      for (const [cx, cy] of SHAPES[next].cells) block(RX + cx * CELL, BY + 30 + cy * CELL, SHAPES[next].hue);
+      Kit.text(c, 'LEVEL', RX, BY + 120, 12, '#a99fd0', 'left');
+      Kit.text(c, String(level), RX, BY + 145, 22, '#ffd23f', 'left');
+      Kit.text(c, 'LINES', RX, BY + 185, 12, '#a99fd0', 'left');
+      Kit.text(c, String(lines), RX, BY + 210, 22, '#34e1d6', 'left');
+
+      const LX = BX - 40;
+      Kit.text(c, 'STORM', LX, BY + 10, 12, '#a99fd0', 'right');
+      const k = Kit.clamp(stormT / STORM_EVERY, 0, 1);
+      c.fillStyle = 'rgba(255,255,255,.08)'; c.fillRect(LX - 14, BY + 30, 14, 200);
+      c.fillStyle = k < .25 ? '#ff3d81' : '#34e1d6';
+      c.fillRect(LX - 14, BY + 30 + 200 * k, 14, 200 * (1 - k));
+      c.restore();
+
+      if (strike){
+        c.save();
+        c.globalAlpha = strike.t / 0.35;
+        c.strokeStyle = '#fff'; c.lineWidth = 3; c.shadowColor = '#34e1d6'; c.shadowBlur = 20;
+        c.beginPath();
+        let x = strike.x, y = 0;
+        c.moveTo(x, y);
+        while (y < H){ y += 30; x += Kit.rand(-18, 18); c.lineTo(x, y); }
+        c.stroke();
+        c.fillStyle = 'rgba(200,240,255,.15)'; c.fillRect(0, 0, W, H);
+        c.restore();
+      }
+    },
+  });
+})();
+</script>
+</body>
+</html>

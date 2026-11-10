@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Cipher — Otacity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="stylesheet" href="kit.css">
+<script src="kit.js"></script>
+</head>
+<body>
+<script>
+'use strict';
+(() => {
+  const W = 800, H = 450;
+  const SYMBOLS = [
+    { hue: 330, glyph: 'circle' }, { hue: 185, glyph: 'square' }, { hue: 48, glyph: 'tri' },
+    { hue: 140, glyph: 'diamond' }, { hue: 265, glyph: 'plus' }, { hue: 20, glyph: 'star' },
+  ];
+  const TRIES = 10, ROW_H = 36, BOARD_X = 150, BOARD_Y = 40;
+  let round, slots, code, rows, guess, cursor, solved, revealT;
+
+  function newRound(){
+    slots = round >= 4 ? 5 : 4;
+    code = Array.from({ length: slots }, () => Kit.randInt(0, SYMBOLS.length - 1));
+    rows = [];
+    guess = Array(slots).fill(0);
+    cursor = 0; solved = false; revealT = 0;
+    Kit.hud(`ROUND <b>${round}</b>`);
+  }
+
+  function grade(g){
+    let exact = 0, near = 0;
+    const cRest = [], gRest = [];
+    g.forEach((v, i) => { if (v === code[i]) exact++; else { cRest.push(code[i]); gRest.push(v); } });
+    for (const v of gRest){ const j = cRest.indexOf(v); if (j >= 0){ near++; cRest.splice(j, 1); } }
+    return { exact, near };
+  }
+
+  function submit(){
+    const r = grade(guess);
+    rows.push({ g: [...guess], ...r });
+    if (r.exact === slots){
+      solved = true; revealT = 1.6;
+      Kit.score += (TRIES - rows.length + 1) * 100 * (slots - 3);
+      [660, 880, 1100, 1320].forEach((f, i) => setTimeout(() => Kit.sfx(f, .12, 'triangle', .09), i * 90));
+    } else if (rows.length >= TRIES){
+      Kit.sfx(150, .6, 'sawtooth', .08, 50);
+      Kit.end('LOCKED OUT', `REACHED ROUND ${round}  ·  SCORE ${Kit.score}`);
+    } else {
+      Kit.sfx(300 + r.exact * 120, .08, 'square', .06);
+    }
+  }
+
+  function glyph(c, s, x, y, r, alpha = 1){
+    const sym = SYMBOLS[s];
+    c.save();
+    c.globalAlpha = alpha;
+    c.fillStyle = `hsl(${sym.hue} 90% 60%)`;
+    c.shadowColor = c.fillStyle; c.shadowBlur = alpha === 1 ? 10 : 0;
+    c.beginPath();
+    switch (sym.glyph){
+      case 'circle': c.arc(x, y, r, 0, 7); break;
+      case 'square': c.rect(x - r * .85, y - r * .85, r * 1.7, r * 1.7); break;
+      case 'tri': c.moveTo(x, y - r); c.lineTo(x + r, y + r * .8); c.lineTo(x - r, y + r * .8); break;
+      case 'diamond': c.moveTo(x, y - r); c.lineTo(x + r, y); c.lineTo(x, y + r); c.lineTo(x - r, y); break;
+      case 'plus': { const t = r * .38; c.rect(x - t, y - r, t * 2, r * 2); c.rect(x - r, y - t, r * 2, t * 2); break; }
+      case 'star':
+        for (let i = 0; i < 10; i++){
+          const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * .45 : r;
+          c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+        }
+        break;
+    }
+    c.closePath(); c.fill();
+    c.restore();
+  }
+
+  const slotX = i => BOARD_X + 60 + i * 46;
+  const rowY = i => BOARD_Y + 20 + (TRIES - 1 - i) * ROW_H;
+
+  Kit.run({
+    slug: 'cipher',
+    title: 'Cipher',
+    width: W, height: H,
+    help: ['CRACK THE HIDDEN CODE IN 10 TRIES', '←/→ PICK A SLOT · ↑/↓ CHANGE SYMBOL', 'A / ENTER SUBMIT · OR CLICK SLOTS', 'PINK PIP = RIGHT SPOT · CYAN = WRONG SPOT', 'CODES GET LONGER FROM ROUND 4'],
+    start(){ round = 1; newRound(); },
+    update(dt){
+      if (solved){
+        revealT -= dt;
+        if (revealT <= 0){ round++; newRound(); }
+        return;
+      }
+      if (Kit.hit('left')){ cursor = (cursor + slots - 1) % slots; Kit.sfx(400, .03); }
+      if (Kit.hit('right')){ cursor = (cursor + 1) % slots; Kit.sfx(400, .03); }
+      if (Kit.hit('up')){ guess[cursor] = (guess[cursor] + 1) % SYMBOLS.length; Kit.sfx(520, .03); }
+      if (Kit.hit('down')){ guess[cursor] = (guess[cursor] + SYMBOLS.length - 1) % SYMBOLS.length; Kit.sfx(520, .03); }
+      if (Kit.hit('a')) submit();
+    },
+    click(x, y){
+      if (solved) return;
+      const ry = rowY(rows.length);
+      for (let i = 0; i < slots; i++){
+        if (Math.abs(x - slotX(i)) < 20 && Math.abs(y - ry) < 18){
+          cursor = i; guess[i] = (guess[i] + 1) % SYMBOLS.length; Kit.sfx(520, .03);
+          return;
+        }
+      }
+      // submit button
+      if (x > BOARD_X + 60 + slots * 46 && x < BOARD_X + 60 + slots * 46 + 90 && Math.abs(y - ry) < 16) submit();
+    },
+    draw(c){
+      c.fillStyle = '#0d0820';
+      c.fillRect(0, 0, W, H);
+      if (!code) return;
+
+      c.fillStyle = 'rgba(255,255,255,.03)';
+      c.beginPath(); c.roundRect(BOARD_X, BOARD_Y, 60 + slots * 46 + 110, TRIES * ROW_H + 6, 12); c.fill();
+
+      for (let i = 0; i < TRIES; i++){
+        const y = rowY(i);
+        Kit.text(c, String(i + 1).padStart(2, '0'), BOARD_X + 22, y, 11, '#5d5480');
+        const done = rows[i], active = i === rows.length && !solved;
+        for (let s = 0; s < slots; s++){
+          const x = slotX(s);
+          if (done) glyph(c, done.g[s], x, y, 11);
+          else if (active){
+            glyph(c, guess[s], x, y, 11);
+            if (s === cursor){
+              c.strokeStyle = '#ffd23f'; c.lineWidth = 2;
+              c.strokeRect(x - 17, y - 17, 34, 34);
+            }
+          } else {
+            c.fillStyle = 'rgba(255,255,255,.07)';
+            c.beginPath(); c.arc(x, y, 4, 0, 7); c.fill();
+          }
+        }
+        const px = slotX(slots) + 10;
+        if (done){
+          for (let p = 0; p < slots; p++){
+            const col = p < done.exact ? '#ff3d81' : p < done.exact + done.near ? '#34e1d6' : 'rgba(255,255,255,.1)';
+            c.fillStyle = col;
+            c.beginPath(); c.arc(px + (p % 3) * 12, y - 6 + Math.floor(p / 3) * 12, 4, 0, 7); c.fill();
+          }
+        } else if (active){
+          c.fillStyle = '#ff3d81';
+          c.beginPath(); c.roundRect(px - 8, y - 14, 84, 28, 7); c.fill();
+          Kit.text(c, 'CHECK', px + 34, y + 1, 12, '#0d0820');
+        }
+      }
+
+      // right column: the code (hidden until solved) and a legend
+      const RX = 695;
+      Kit.text(c, 'CODE', RX, 60, 12, '#a99fd0');
+      for (let s = 0; s < slots; s++){
+        const x = RX - (slots - 1) * 16 + s * 32;
+        if (solved || Kit.state === 'over') glyph(c, code[s], x, 92, 11);
+        else { c.fillStyle = '#2a1a4f'; c.beginPath(); c.roundRect(x - 12, 80, 24, 24, 5); c.fill(); Kit.text(c, '?', x, 93, 12, '#a99fd0'); }
+      }
+      Kit.text(c, 'SYMBOLS', RX, 160, 12, '#a99fd0');
+      SYMBOLS.forEach((_, i) => glyph(c, i, RX - 75 + i * 30, 190, 9));
+      Kit.text(c, 'ROUND ' + round, RX, 260, 16, '#ffd23f');
+      if (solved) Kit.text(c, 'CRACKED!', RX, 300, 18, '#34e1d6');
+    },
+  });
+})();
+</script>
+</body>
+</html>

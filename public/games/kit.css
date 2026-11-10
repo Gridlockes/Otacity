@@ -1,0 +1,68 @@
+/* Shared cabinet shell for every Otacity game */
+:root{
+  --bg:#150c26;
+  --panel:#221540;
+  --line:rgba(255,255,255,.09);
+  --ink:#efe9ff;
+  --ink-dim:#a99fd0;
+  --magenta:#ff3d81;
+  --cyan:#34e1d6;
+  --amber:#ffd23f;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; overflow:hidden;
+  background:
+    radial-gradient(900px 500px at 85% -10%, rgba(255,61,129,.14), transparent 60%),
+    radial-gradient(800px 500px at 5% 110%, rgba(52,225,214,.12), transparent 55%),
+    var(--bg);
+  color:var(--ink);
+  font-family:"Space Grotesk",system-ui,sans-serif;
+  display:flex; flex-direction:column;
+  -webkit-tap-highlight-color:transparent;
+  touch-action:none; user-select:none; -webkit-user-select:none;
+}
+
+.hud{
+  flex:none; display:flex; align-items:center; gap:14px;
+  padding:10px 16px; border-bottom:1px solid var(--line);
+  font-family:"Space Mono",monospace; font-size:13px;
+}
+.hud .back{
+  color:var(--ink-dim); text-decoration:none; border:1px solid var(--line);
+  border-radius:8px; padding:6px 10px; white-space:nowrap;
+}
+.hud .back:hover,.hud .back:focus-visible{color:var(--magenta); border-color:rgba(255,61,129,.5); outline:none}
+.hud .name{font-family:"Silkscreen",monospace; font-size:15px; letter-spacing:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.hud .stats{margin-left:auto; display:flex; gap:16px; color:var(--ink-dim); white-space:nowrap}
+.hud .stats b{color:var(--amber); font-weight:700}
+
+.stage{flex:1; min-height:0; display:grid; place-items:center; padding:12px 16px}
+canvas{
+  display:block; border-radius:12px; border:1px solid var(--line);
+  background:#0d0820; box-shadow:0 26px 60px -24px rgba(0,0,0,.9);
+  image-rendering:auto;
+}
+
+/* on-screen controls, only on touch devices */
+.touch{display:none; flex:none; justify-content:space-between; align-items:center; padding:6px 18px 18px}
+@media (pointer:coarse){ .touch{display:flex} }
+.touch .dpad{display:grid; grid-template-columns:repeat(3,52px); grid-template-rows:repeat(3,52px); gap:4px}
+.touch .btns{display:flex; gap:14px}
+.touch button{
+  font:700 14px "Silkscreen",monospace; color:var(--ink);
+  background:var(--panel); border:1px solid var(--line); border-bottom-width:3px; border-radius:12px;
+  touch-action:none;
+}
+.touch button.on{background:var(--magenta); border-color:var(--magenta)}
+.touch .dpad button[data-a="up"]{grid-column:2; grid-row:1}
+.touch .dpad button[data-a="left"]{grid-column:1; grid-row:2}
+.touch .dpad button[data-a="right"]{grid-column:3; grid-row:2}
+.touch .dpad button[data-a="down"]{grid-column:2; grid-row:3}
+.touch .btns button{width:68px; height:68px; border-radius:50%}
+
+@media (max-width:560px){
+  .hud{gap:10px; padding:8px 12px; font-size:12px}
+  .hud .stats{gap:10px}
+}

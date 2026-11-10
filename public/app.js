@@ -42,7 +42,7 @@
     .then(renderGames)
     .catch(err => {
       console.error('Failed to load games:', err);
-      grid.innerHTML = '<p style="color:var(--ink-dim)">Could not load the game list. Is the server running?</p>';
+      grid.innerHTML = '<p style="color:var(--ink-dim)">Could not load the game list. Try refreshing the page.</p>';
     });
 
   function renderGames(games){

@@ -99,5 +99,5 @@ function streamWithRange(req, res, filePath, contentType) {
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.listen(PORT, () => {
-  console.log(`\n  GameGrid running →  http://localhost:${PORT}\n`);
+  console.log(`\n  Otacity running →  http://localhost:${PORT}\n`);
 });
