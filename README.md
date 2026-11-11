@@ -1,7 +1,7 @@
 # Otacity
 
-A free retro arcade of browser games: Neon Snake, Grid Runner, Pixel Siege, Astro Drift,
-Cipher, Dungeon Bytes, Block Storm and Laser Pong. Keyboard, gamepad and touch all work.
+A free retro arcade of browser games: Grid Runner, Pixel Siege, Cipher, Block Storm
+and Laser Pong. Keyboard, gamepad and touch all work.
 
 ## Run locally
 
@@ -12,7 +12,7 @@ npm start          # http://localhost:3000
 
 ## Layout
 
-- `public/` — everything the browser loads (homepage, `app.js`, `games/`, `audio/`)
+- `public/` — everything the browser loads (homepage, `app.js`, `games/`)
 - `public/games/kit.js` — the small shared engine (input, menus, scores, sound)
 - `data/games.js` — the game catalog, served at `/api/games`
 - `server.js` — Express server for local play

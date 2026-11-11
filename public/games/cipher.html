@@ -33,11 +33,25 @@
   }
 
   function grade(g){
-    let exact = 0, near = 0;
-    const cRest = [], gRest = [];
-    g.forEach((v, i) => { if (v === code[i]) exact++; else { cRest.push(code[i]); gRest.push(v); } });
-    for (const v of gRest){ const j = cRest.indexOf(v); if (j >= 0){ near++; cRest.splice(j, 1); } }
-    return { exact, near };
+    const hits = g.map((v, i) => v === code[i]);
+    return { hits, exact: hits.filter(Boolean).length };
+  }
+
+  // a solved row slot: cyan tile + green check when right, red tile + X when wrong
+  function mark(c, x, y, sym, right){
+    c.fillStyle = right ? '#34e1d6' : '#ff3b4e';
+    c.beginPath(); c.roundRect(x - 17, y - 17, 34, 34, 7); c.fill();
+    glyph(c, sym, x, y, 11, 0.25);
+    c.save();
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    const path = () => {
+      c.beginPath();
+      if (right){ c.moveTo(x - 8, y + 1); c.lineTo(x - 2, y + 7); c.lineTo(x + 9, y - 7); }
+      else { c.moveTo(x - 7, y - 7); c.lineTo(x + 7, y + 7); c.moveTo(x + 7, y - 7); c.lineTo(x - 7, y + 7); }
+    };
+    path(); c.strokeStyle = '#0d0820'; c.lineWidth = 8; c.stroke();
+    path(); c.strokeStyle = right ? '#22e05a' : '#ffffff'; c.lineWidth = 4; c.stroke();
+    c.restore();
   }
 
   function submit(){
@@ -86,7 +100,7 @@
     slug: 'cipher',
     title: 'Cipher',
     width: W, height: H,
-    help: ['CRACK THE HIDDEN CODE IN 10 TRIES', '←/→ PICK A SLOT · ↑/↓ CHANGE SYMBOL', 'A / ENTER SUBMIT · OR CLICK SLOTS', 'PINK PIP = RIGHT SPOT · CYAN = WRONG SPOT', 'CODES GET LONGER FROM ROUND 4'],
+    help: ['CRACK THE HIDDEN CODE IN 10 TRIES', '←/→ PICK A SLOT · ↑/↓ CHANGE SYMBOL', 'A / ENTER SUBMIT · OR CLICK SLOTS', 'CYAN + CHECK = RIGHT · RED + X = WRONG', 'CODES GET LONGER FROM ROUND 4'],
     start(){ round = 1; newRound(); },
     update(dt){
       if (solved){
@@ -126,7 +140,7 @@
         const done = rows[i], active = i === rows.length && !solved;
         for (let s = 0; s < slots; s++){
           const x = slotX(s);
-          if (done) glyph(c, done.g[s], x, y, 11);
+          if (done) mark(c, x, y, done.g[s], done.hits[s]);
           else if (active){
             glyph(c, guess[s], x, y, 11);
             if (s === cursor){
@@ -139,13 +153,7 @@
           }
         }
         const px = slotX(slots) + 10;
-        if (done){
-          for (let p = 0; p < slots; p++){
-            const col = p < done.exact ? '#ff3d81' : p < done.exact + done.near ? '#34e1d6' : 'rgba(255,255,255,.1)';
-            c.fillStyle = col;
-            c.beginPath(); c.arc(px + (p % 3) * 12, y - 6 + Math.floor(p / 3) * 12, 4, 0, 7); c.fill();
-          }
-        } else if (active){
+        if (active){
           c.fillStyle = '#ff3d81';
           c.beginPath(); c.roundRect(px - 8, y - 14, 84, 28, 7); c.fill();
           Kit.text(c, 'CHECK', px + 34, y + 1, 12, '#0d0820');
